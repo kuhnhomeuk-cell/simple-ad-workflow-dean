@@ -1,0 +1,39 @@
+{
+  "row_id": "NL-028",
+  "target_language": "nl-NL",
+  "target_country": "Netherlands",
+  "primary_text": "",
+  "headline": "",
+  "description": "",
+  "note": "No source copy exists for this ad. The Meta Ad Library lists it as having multiple versions and shows no primary text, headline or description, so there was nothing to translate. The image text was translated and the row was set to Needs Review.",
+  "image_strings": [
+    {
+      "source": "AUJOURD'HUI SEULEMENT",
+      "target": "ALLEEN VANDAAG"
+    },
+    {
+      "source": "1 ACHETÉ = 1 OFFERT",
+      "target": "1 GEKOCHT = 1 GRATIS"
+    },
+    {
+      "source": "VOTRE TEINTE. INSTANTANÉMENT.",
+      "target": "UW TINT. DIRECT."
+    },
+    {
+      "source": "TEINTE SUR MESURE",
+      "target": "TINT OP MAAT"
+    },
+    {
+      "source": "FORMULE HYDRATANTE",
+      "target": "HYDRATERENDE FORMULE"
+    },
+    {
+      "source": "DU TRANSPARENT À VOTRE TEINTE",
+      "target": "VAN TRANSPARANT NAAR UW TINT"
+    },
+    {
+      "source": "TENUE LONGUE DURÉE",
+      "target": "LANGHOUDEND"
+    }
+  ]
+}
