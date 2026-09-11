@@ -3,7 +3,7 @@
   "target_language": "nl-NL",
   "target_country": "Netherlands",
   "primary_text": "Twijfelt u nog?\n\nDuizenden vrouwen ontdekten Avenor Paris al — de lippenstift die uw pH afleest en een kleur op maat creëert, uniek voor uw huid.\n\nGeen opgelegde tint. Geen onaangename verrassing. Gewoon de kleur die bij u past, vanaf de eerste keer opbrengen.\n\nDe formule met hyaluronzuur, vitamine E en 24K-goudvlokjes hydrateert uw lippen zonder in fijne lijntjes uit te lopen. 8 uur+ houdbaar, zonder bijwerken.\n\nNu: één kopen, één gratis. Gratis verzending. 60 dagen niet-goed-geld-terug.\n\n➡ Ontdek uw tint",
-  "headline": "Eén kopen, één gratis - eindigt vanavond",
+  "headline": "1 GEKOCHT = 1 GRATIS - eindigt vanavond",
   "description": "PH Avenor™ lippenstift: hydrateert, verfraait en onthult uw natuurlijke tint. Langhoudende kleur, comfortabele finish.",
   "translator_notes": "Formal 'u' throughout, matching the client's NL-025 example. Offer phrasing borrowed verbatim from that example ('een kopen, een gratis', 'eindigt vanavond', '60 dagen niet-goed-geld-terug'). Headline keeps the source's '1 X = 1 Y' equation shape rather than the example's prose form, because the FR headline for this ad is set in caps as an equation; it fits 39 chars. 'Livraison offerte' rendered as 'Gratis verzending'. 'sur-mesure/unique a votre carnation' rendered as 'op maat ... uniek voor uw huid' - Dutch has no neat equivalent of 'carnation', worth a second look. Description trimmed of the source's third clause ('levres douces toute la journee') to stay inside 125 chars; no claim added. Image note lines kept to roughly source length for a three-line sticky note.",
   "judge": {
