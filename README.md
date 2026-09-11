@@ -4,6 +4,8 @@ Set a row to `Translate`, pick a target country, paste a Facebook Ad Library lin
 
 The sheet is the whole interface. There is nothing else for you to open.
 
+Side by side, every row: open [`showcase.html`](showcase.html) in a browser. Each ad is rendered as a Facebook card, French on the left, Dutch on the right.
+
 Loom of a run: [Loom link to be added]
 
 ## The four rows
