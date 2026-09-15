@@ -1,0 +1,64 @@
+[project]
+name = "adtranslate"
+version = "0.1.0"
+description = "Translate Facebook ad copy and creatives from a Google Sheet."
+requires-python = ">=3.12"
+dependencies = [
+    "typer",
+    "pydantic",
+    "pydantic-settings",
+    "playwright",
+    "httpx",
+    "pillow",
+    "gspread",
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "anthropic",
+    "google-genai",
+]
+
+[project.scripts]
+adtranslate = "adtranslate.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-xdist",
+    "ruff",
+    "mypy",
+    "respx",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "adtranslate"
+module-root = "src"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"deliverable/build_showcase.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["gspread.*", "googleapiclient.*", "google_auth_oauthlib.*", "google.auth.*", "google.oauth2.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+follow_untyped_imports = true
+
+[tool.pytest.ini_options]
+addopts = '-m "not live"'
+markers = ["live: hits a real external service; needs credentials"]
+testpaths = ["tests"]
