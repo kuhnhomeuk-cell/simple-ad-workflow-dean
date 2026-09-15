@@ -27,9 +27,11 @@ class Settings(BaseSettings):
     image_model: str = "gemini-3.1-flash-image"
     image_retry_model: str = "gemini-3-pro-image"
 
-    # The no-key runtime: a human-or-agent session answers the model jobs, and the Grok
-    # CLI subscription does the image edits.
+    # The no-key runtime: the Claude Code session answers the model jobs, and a subscription
+    # CLI (Codex, else Grok) does the image edits.
     session_wait_seconds: int = 900
+    codex_bin: str = "codex"
+    codex_timeout_seconds: int = 600
     grok_bin: str = "~/.grok/bin/grok"
     grok_timeout_seconds: int = 600
 

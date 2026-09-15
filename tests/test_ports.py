@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -792,3 +793,97 @@ def test_a_run_never_opens_a_browser_to_sign_in(tmp_path: Path) -> None:
     )
     with pytest.raises(AuthError, match="adtranslate auth"):
         get_credentials(settings)
+
+
+# --------------------------------------------------------------------------
+# The Codex door
+# --------------------------------------------------------------------------
+
+
+def _fake_codex(tmp_path: Path) -> Path:
+    binary = tmp_path / "codex"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    return binary
+
+
+def test_without_a_gemini_key_codex_edits_and_the_session_reads_images(tmp_path: Path) -> None:
+    from adtranslate.ports import CodexImageEditPort, build_ports
+
+    settings = Settings(_env_file=None, codex_bin=str(_fake_codex(tmp_path)))
+    ports = build_ports(settings, "SHEET", fetcher=object())  # type: ignore[arg-type]
+    assert isinstance(ports.image_edit, CodexImageEditPort)
+    assert ports.image_edit.available is True
+    assert ports.image_edit.label == "codex"
+    assert isinstance(ports.vision, SessionVisionPort)
+
+
+def test_codex_edit_runs_one_exec_and_returns_the_new_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from adtranslate.ports import CodexImageEditPort
+
+    source = tmp_path / "creative.jpg"
+    source.write_bytes(b"x")
+    out_dir = tmp_path / "out"
+    seen: list[tuple[list[str], dict[str, Any]]] = []
+
+    class Done:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(argv: list[str], **kwargs: Any) -> Done:
+        seen.append((argv, kwargs))
+        (Path(argv[argv.index("-C") + 1]) / "codex-edit-1.png").write_bytes(b"y")
+        return Done()
+
+    monkeypatch.setattr("adtranslate.ports.subprocess.run", fake_run)
+    settings = Settings(_env_file=None, codex_bin=str(_fake_codex(tmp_path)))
+    result = CodexImageEditPort(settings).edit(
+        source, [("Achetez 1 +", "Koop 1 +")], out_dir, attempt=1
+    )
+
+    assert result.name == "codex-edit-1.png"
+    argv, kwargs = seen[0]
+    assert argv[1:3] == ["exec", "--skip-git-repo-check"]
+    assert argv[argv.index("-s") + 1] == "workspace-write"
+    assert argv[argv.index("-C") + 1] == str(out_dir.resolve())
+    assert argv[argv.index("--image") + 1] == str(source.resolve())
+    prompt = argv[argv.index("--image") - 1]
+    assert '"Achetez 1 +" becomes "Koop 1 +".' in prompt
+    assert "codex-edit-1.png" in prompt
+    assert kwargs["stdin"] is subprocess.DEVNULL
+    assert kwargs["timeout"] == settings.codex_timeout_seconds
+
+
+def test_codex_check_names_the_sign_in_fix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from adtranslate.ports import CodexImageEditPort
+
+    class NotLoggedIn:
+        returncode = 1
+        stdout = "Not logged in"
+        stderr = ""
+
+    monkeypatch.setattr("adtranslate.ports.subprocess.run", lambda argv, **kw: NotLoggedIn())
+    port = CodexImageEditPort(Settings(_env_file=None, codex_bin=str(_fake_codex(tmp_path))))
+    with pytest.raises(PipelineError, match="codex login"):
+        port.check()
+
+
+def test_codex_check_refuses_not_logged_in_even_on_exit_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from adtranslate.ports import CodexImageEditPort
+
+    class Odd:
+        returncode = 0
+        stdout = "Not logged in"
+        stderr = ""
+
+    monkeypatch.setattr("adtranslate.ports.subprocess.run", lambda argv, **kw: Odd())
+    port = CodexImageEditPort(Settings(_env_file=None, codex_bin=str(_fake_codex(tmp_path))))
+    with pytest.raises(PipelineError, match="codex login"):
+        port.check()

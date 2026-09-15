@@ -334,10 +334,13 @@ def run_once(
 
 
 def _require_editor(ports: Ports) -> None:
+    """An image editor must exist and pass its own check before any row is claimed."""
     if not ports.image_edit.available:
         raise PipelineError(
-            "no image editor — set GEMINI_API_KEY in .env; text inside ad images needs it"
+            "no image editor — install the Codex CLI and run `codex login`, "
+            "or set GEMINI_API_KEY in .env; text inside ad images needs one"
         )
+    ports.image_edit.check()
 
 
 def _dry_run(ports: Ports, only: str | None, echo: Callable[[str], None]) -> None:
@@ -357,7 +360,6 @@ def _dry_run(ports: Ports, only: str | None, echo: Callable[[str], None]) -> Non
     echo(f"rows with Status={STATUS_TRANSLATE}: {len(rows)}")
     echo(f"drive folder: {ports.google.check_drive()}")
     _require_editor(ports)
-    ports.image_edit.check()
     echo(f"image editor: {ports.image_edit.label}")
     echo("dry run: nothing written to the sheet or Drive")
 

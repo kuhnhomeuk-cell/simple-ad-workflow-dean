@@ -684,3 +684,17 @@ def test_an_upload_failure_keeps_the_copy_and_says_so(tmp_path: Path, settings: 
     assert outcome.status == "Needs Review"
     assert outcome.note == "image not uploaded: 403 insufficientFilePermissions"
     assert sheet.cells(2, "Headline") == "Alleen vanavond"
+
+
+def test_a_real_run_refuses_to_start_when_the_editor_check_fails(
+    tmp_path: Path, settings: Settings
+) -> None:
+    class SignedOut(FakeEdit):
+        def check(self) -> None:
+            raise PipelineError("the Codex CLI is not signed in — run `codex login` first")
+
+    sheet = make_sheet(["NL-027"])
+    ports, _ = build(sheet, edit=SignedOut())
+    with pytest.raises(PipelineError, match="codex login"):
+        run_once(ports, settings, tmp_path, workers=5, echo=lambda _: None)
+    assert sheet.writes == []

@@ -24,11 +24,12 @@ Nothing else on the sheet is touched.
    The engine asks for the Sheets scope and the full Drive scope, so it can use a folder the owner created by hand.
 3. The sheet ID (the long id in the sheet's URL) and the ID of the Drive folder that will hold the country folders.
    The sheet must have the layout in "The sheet" below.
-4. A Gemini API key, for the text inside ad images.
-   Create it at https://aistudio.google.com/apikey in the same Google Cloud project, with billing turned on for that project.
-   Gemini reads the text in each image, paints the translation back and checks the result.
-   It is the only paid key, and it is required: the setup check stops without it.
-5. No Anthropic API key. The Claude Code session writes the ad copy and the judge scores (see "Answering the model jobs").
+4. For the text inside ad images: the Codex CLI, signed in with the owner's ChatGPT subscription. No API key.
+   Install it with `npm install -g @openai/codex`, run `codex login` once and choose Sign in with ChatGPT.
+   Codex paints the translated text back into each image. The Claude Code session reads the images before and after.
+   The alternative is a Gemini API key in `.env` with billing on; when one is set, Gemini does the image work instead.
+   One of the two is required: the setup check stops without it.
+5. No Anthropic, OpenAI or OpenRouter API key. The Claude Code session writes the ad copy and the judge scores (see "Answering the model jobs").
    With an Anthropic key in `.env`, the engine calls the API itself instead.
 
 ## The sheet
@@ -55,12 +56,13 @@ Run these from the repo root.
 2. `uv sync --group dev`
 3. `uv run playwright install chromium` (on Linux: `uv run playwright install --with-deps chromium`)
 4. `mkdir -p .secrets` and place the OAuth client JSON at `.secrets/google-oauth-client.json`.
-5. `cp .env.example .env` and set `SHEET_ID`, `DRIVE_ROOT_FOLDER_ID` and `GEMINI_API_KEY`.
-   Leave every other line blank.
+5. `cp .env.example .env` and set `SHEET_ID` and `DRIVE_ROOT_FOLDER_ID`.
+   Leave every other line blank, including `GEMINI_API_KEY` when Codex does the images.
+   Check `codex login status` says it is logged in.
 6. `uv run adtranslate auth`. A browser opens once, the owner signs in, and the token is saved to `.secrets/google-token.json`.
 7. `uv run adtranslate run --once --dry-run`. It is the setup check and starts no work.
-   It prints the header row, the countries on the Settings tab, how many rows wait in `Translate`, the Drive folder's name and the image editor (`gemini`), then writes nothing.
-   It also asks Gemini for the two image models, so a wrong key or an unavailable model stops here.
+   It prints the header row, the countries on the Settings tab, how many rows wait in `Translate`, the Drive folder's name and the image editor (`codex` or `gemini`), then writes nothing.
+   It also checks the editor: Codex must be signed in, and a Gemini key must reach both image models.
    If it prints all five lines and ends with "dry run: nothing written", the setup is done.
    Any problem prints one `error:` line naming what to fix.
 
@@ -70,8 +72,8 @@ Run these from the repo root.
 
 `uv run adtranslate run --once --workers 5`
 
-The engine claims each `Translate` row, fetches the ad, writes a copy job for the session, and sends the image to Gemini.
-It will not start without `GEMINI_API_KEY`.
+The engine claims each `Translate` row, fetches the ad, writes a copy job for the session, and has the image edited.
+It will not start without an image editor (Codex signed in, or `GEMINI_API_KEY`).
 It then waits (up to 15 minutes per job) for the answer file to appear.
 While it waits, the run is blocked.
 Run it in the background and answer the jobs from the same session.
@@ -108,9 +110,17 @@ The judge block is a second, strict read of the answer against the source.
 The writer and the judge must not be the same pass, so spawn a separate sub-agent for the judge if you can.
 Every `image_strings` source in the request must appear with a target.
 
+**Vision job** (when Codex edits the images): `runs/<ID>/vision.request.json`, question `detect` or `verify`.
+Open the image files named in the request with the Read tool and look at them.
+For `detect`, answer with `{"has_text": bool, "blocks": [{"text": "...", "role": "promo|price|handwritten|logo|other", "translate": bool}]}`.
+Logos, brand names and mirrored reflections are `translate: false`.
+For `verify`, compare the original and the edited image and answer `{"targets_present": [...], "sources_remaining": [...], "unchanged_score": 1-5}`.
+`targets_present` lists the translated strings you can read in the edited image, `sources_remaining` any original strings still there, and `unchanged_score` how untouched the rest of the photo is.
+Write it to the `answer_file` path.
+
 Answer every waiting job, then let the run continue.
 A `copy` job left unanswered for 15 minutes ends its row as `Failed` with the reason "copy job not filled".
-An unanswered `image_strings` job keeps the copy on the row and ends it `Needs Review` with "image not translated: copy job not filled".
+An unanswered `image_strings` or vision job keeps the copy on the row and ends it `Needs Review` with "image not translated: …".
 To recover, write the answer file, set that row's `Status` back to `Translate`, and run again.
 A copy answer for the same ad and language is kept and used at once.
 An answer left over from a different ad or language is discarded, never reused.
@@ -129,9 +139,10 @@ The sheet is the result.
 - `run` says the Google sign-in has expired or that it is not signed in. Run `uv run adtranslate auth`, sign in, then run again.
 - `run` says the sheet cannot be read. The signed-in Google account must have edit access to that sheet.
 - The fetcher returns no ad. Open the Ad Library link in a browser. The ad may have been taken down or be a video.
-- The dry run or `run` says "no image editor". Set `GEMINI_API_KEY` in `.env`. See "What it needs".
+- The dry run or `run` says "no image editor". Install the Codex CLI and run `codex login`, or set `GEMINI_API_KEY`. See "What it needs".
+- The dry run says the Codex CLI is not signed in. Run `codex login` and choose Sign in with ChatGPT.
 - The dry run says the Gemini key or its image models were refused. Check the key in AI Studio and that billing is on.
-- A row ends `Needs Review` with "image not translated: …" (for example a Gemini `429 RESOURCE_EXHAUSTED` billing message). The translated copy is already on the row. Fix the cause, such as billing or credit on the key's project, then set the row back to `Translate` to get the image.
+- A row ends `Needs Review` with "image not translated: …" (for example a Codex usage limit or a Gemini billing message). The translated copy is already on the row. Fix the cause, then set the row back to `Translate` to get the image.
 - The dry run says it cannot open the Drive folder. The signed-in account needs access to that folder, and `DRIVE_ROOT_FOLDER_ID` must be the folder's id from its URL.
 - Anything else. The row's `Review Note` and `runs/<ID>/` say what happened. Nothing is lost.
 

@@ -57,6 +57,7 @@ __all__ = [
     "SessionCopyPort",
     "SessionVisionPort",
     "VisionPort",
+    "CodexImageEditPort",
     "build_ports",
     "copy_job_pending",
     "parse_external_data",
@@ -78,7 +79,7 @@ _SEPARATOR = " | "
 _MIN_SEPARATORS = 3
 _STATUSES = frozenset({"Translate", "Processing", "Needs Review", "Failed", "Finished"})
 
-# One image edit at a time: the Grok CLI drives a single interactive session.
+# One image edit at a time: each subscription CLI drives a single session.
 _EDIT_SEMAPHORE = threading.Semaphore(1)
 
 
@@ -587,6 +588,102 @@ class GrokImageEditPort:
         return _newest_image(out_dir, since=started, exclude=source)
 
 
+CODEX_PROMPT = """Edit the attached image with your image generation tool. Do not draw it in code.
+Keep this exact photo unchanged: the product, the background, the lighting, the framing, the \
+layout and every other piece of text. Change only the text listed here, one for one. \
+{replacements} Same style, same font or handwriting, same colour, same size and same placement \
+for every replaced string. No other text anywhere.
+Save the edited image as {name} in the working directory.
+Print only the absolute path of the saved file as the last line.
+"""
+
+
+def codex_available(settings: Settings) -> bool:
+    """True when the Codex CLI this machine would drive is on disk or on PATH."""
+    binary = Path(settings.codex_bin).expanduser()
+    return binary.is_file() or shutil.which(settings.codex_bin) is not None
+
+
+class CodexImageEditPort:
+    """The no-key path on the owner's machine: the Codex CLI, signed in with ChatGPT, edits."""
+
+    label = "codex"
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+    @property
+    def available(self) -> bool:
+        return codex_available(self._settings)
+
+    def _binary(self) -> str:
+        binary = Path(self._settings.codex_bin).expanduser()
+        return str(binary) if binary.is_file() else self._settings.codex_bin
+
+    def check(self) -> None:
+        try:
+            done = subprocess.run(
+                [self._binary(), "login", "status"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise PipelineError(f"the Codex CLI did not answer: {exc}") from exc
+        said = (done.stdout + done.stderr).casefold()
+        if done.returncode != 0 or "not logged in" in said or "logged in" not in said:
+            raise PipelineError("the Codex CLI is not signed in — run `codex login` first")
+
+    def edit(
+        self,
+        image_path: Path,
+        replacements: list[tuple[str, str]],
+        out_dir: Path,
+        attempt: int = 0,
+    ) -> Path:
+        if not replacements:
+            raise PipelineError("image edit called with no replacements")
+        source = Path(image_path).resolve()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        name = f"codex-edit-{attempt}.png"
+        lines = " ".join(f'"{s}" becomes "{t}".' for s, t in replacements)
+        prompt = CODEX_PROMPT.format(replacements=lines, name=name)
+        argv = [
+            self._binary(),
+            "exec",
+            "--skip-git-repo-check",
+            "-s",
+            "workspace-write",
+            "-C",
+            str(out_dir.resolve()),
+            prompt,
+            "--image",
+            str(source),
+        ]
+        started = time.time()
+        with _EDIT_SEMAPHORE:
+            try:
+                completed = subprocess.run(
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    timeout=self._settings.codex_timeout_seconds,
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise PipelineError("image edit timed out") from exc
+            except OSError as exc:
+                raise PipelineError(f"image edit could not start: {exc}") from exc
+        if completed.returncode != 0:
+            tail = (completed.stderr or completed.stdout or "").strip().splitlines()
+            detail = f": {tail[-1]}" if tail else ""
+            raise PipelineError(f"image edit failed (exit {completed.returncode}){detail}")
+        return _newest_image(out_dir, since=started, exclude=source)
+
+
 def _newest_image(out_dir: Path, since: float, exclude: Path) -> Path:
     """The newest image the edit wrote into `out_dir`."""
     candidates = [
@@ -933,9 +1030,13 @@ def build_ports(settings: Settings, sheet_id: str = "", fetcher: Fetcher | None 
     vision_port: VisionPort = (
         ApiVisionPort(settings) if settings.gemini_api_key else SessionVisionPort(settings)
     )
-    edit_port: ImageEditPort = (
-        ApiImageEditPort(settings) if settings.gemini_api_key else GrokImageEditPort(settings)
-    )
+    edit_port: ImageEditPort
+    if settings.gemini_api_key:
+        edit_port = ApiImageEditPort(settings)
+    elif codex_available(settings):
+        edit_port = CodexImageEditPort(settings)
+    else:
+        edit_port = GrokImageEditPort(settings)
     # Glitch's doors only where this machine has them; elsewhere the project's own OAuth
     # token, which names the missing client file if `auth` has not been run.
     google_port: GooglePort = (
