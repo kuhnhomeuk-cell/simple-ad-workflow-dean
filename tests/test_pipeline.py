@@ -634,3 +634,53 @@ def test_dry_run_stops_when_the_image_editor_check_fails(
     ports, _ = build(sheet, edit=RefusedEdit())
     with pytest.raises(PipelineError, match="API key not valid"):
         run_once(ports, settings, tmp_path, workers=5, dry_run=True, echo=lambda _: None)
+
+
+class BrokenEdit(FakeEdit):
+    def edit(
+        self, image_path: Path, replacements: list[tuple[str, str]], out_dir: Path, attempt: int = 0
+    ) -> Path:
+        raise RuntimeError("429 RESOURCE_EXHAUSTED: prepayment credits are depleted")
+
+
+class BrokenVision(FakeVision):
+    def detect(self, image: Path) -> TextScan:
+        raise PipelineError("vision job not filled (detect)")
+
+
+@pytest.mark.parametrize("broken", ["edit", "vision"])
+def test_an_image_failure_keeps_the_translated_copy_on_the_row(
+    tmp_path: Path, settings: Settings, broken: str
+) -> None:
+    sheet = make_sheet(["NL-027"])
+    scan = TextScan.model_validate(
+        {"has_text": True, "blocks": [{"text": "Achetez 1 +", "translate": True}]}
+    )
+    if broken == "edit":
+        ports, google = build(sheet, vision=FakeVision(scan, []), edit=BrokenEdit())
+    else:
+        ports, google = build(sheet, vision=BrokenVision(scan, []))
+
+    outcome = process_row(sheet.read_rows()[0], ports, settings, tmp_path, locale=LOCALE)
+
+    assert outcome.status == "Needs Review"
+    assert outcome.note.startswith("image not translated:")
+    assert sheet.cells(2, "Headline") == "Alleen vanavond"
+    assert sheet.cells(2, "Primary Text") == "Koop 1 + krijg 1 gratis"
+    assert google.uploads == []
+
+
+def test_an_upload_failure_keeps_the_copy_and_says_so(tmp_path: Path, settings: Settings) -> None:
+    class BrokenGoogle(FakeGoogle):
+        def upload_png(self, path: Path, name: str, country: str) -> str:
+            raise RuntimeError("403 insufficientFilePermissions")
+
+    sheet = make_sheet(["NL-027"])
+    ports, _ = build(sheet)
+    ports.google = BrokenGoogle(sheet)  # type: ignore[assignment]
+
+    outcome = process_row(sheet.read_rows()[0], ports, settings, tmp_path, locale=LOCALE)
+
+    assert outcome.status == "Needs Review"
+    assert outcome.note == "image not uploaded: 403 insufficientFilePermissions"
+    assert sheet.cells(2, "Headline") == "Alleen vanavond"

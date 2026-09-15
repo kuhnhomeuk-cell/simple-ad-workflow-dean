@@ -109,7 +109,8 @@ The writer and the judge must not be the same pass, so spawn a separate sub-agen
 Every `image_strings` source in the request must appear with a target.
 
 Answer every waiting job, then let the run continue.
-A job left unanswered for 15 minutes ends its row as `Failed` with the reason "copy job not filled".
+A `copy` job left unanswered for 15 minutes ends its row as `Failed` with the reason "copy job not filled".
+An unanswered `image_strings` job keeps the copy on the row and ends it `Needs Review` with "image not translated: copy job not filled".
 To recover, write the answer file, set that row's `Status` back to `Translate`, and run again.
 A copy answer for the same ad and language is kept and used at once.
 An answer left over from a different ad or language is discarded, never reused.
@@ -130,7 +131,7 @@ The sheet is the result.
 - The fetcher returns no ad. Open the Ad Library link in a browser. The ad may have been taken down or be a video.
 - The dry run or `run` says "no image editor". Set `GEMINI_API_KEY` in `.env`. See "What it needs".
 - The dry run says the Gemini key or its image models were refused. Check the key in AI Studio and that billing is on.
-- A row fails with a Gemini `429 RESOURCE_EXHAUSTED` or billing message. Turn on billing, or add credit, for the key's project, then set the row back to `Translate`.
+- A row ends `Needs Review` with "image not translated: …" (for example a Gemini `429 RESOURCE_EXHAUSTED` billing message). The translated copy is already on the row. Fix the cause, such as billing or credit on the key's project, then set the row back to `Translate` to get the image.
 - The dry run says it cannot open the Drive folder. The signed-in account needs access to that folder, and `DRIVE_ROOT_FOLDER_ID` must be the folder's id from its URL.
 - Anything else. The row's `Review Note` and `runs/<ID>/` say what happened. Nothing is lost.
 

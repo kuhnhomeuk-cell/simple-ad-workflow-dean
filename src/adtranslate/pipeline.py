@@ -1,8 +1,9 @@
 """The orchestrator: one row in, one row written back.
 
-Every step is wrapped. A `PipelineError` ends the row as `Failed` with a one-line reason;
-anything a step merely flags accumulates into `Needs Review`, and the outputs are written
-either way. Each row leaves a `runs/<ID>/` folder carrying its timeline and its outcome.
+Every step is wrapped. A fault before the copy is done ends the row as `Failed` with a
+one-line reason. Once the copy exists, a fault in the image or upload step, and anything a
+step merely flags, accumulates into `Needs Review`, and the copy is written either way.
+Each row leaves a `runs/<ID>/` folder carrying its timeline and its outcome.
 """
 
 from __future__ import annotations
@@ -221,14 +222,25 @@ def process_row(
         if creative is None:
             reasons.append("no creative on the ad")
         else:
-            with log.step("image"):
-                image = _image(creative, locale, ports, job_dir)
-            reasons += image.review_reasons
-            if image.edited or Path(image.path).suffix.lower() != ".mp4":
-                with log.step("png"):
-                    png = finalise_png(Path(image.path), creative, job_dir, row.id)
-                with log.step("upload"):
-                    drive_url = ports.google.upload_png(png, f"{row.id}.png", row.target_country)
+            # The copy is already done. An image or upload fault must not throw it away,
+            # so it becomes a review reason on a row that still carries the copy.
+            try:
+                with log.step("image"):
+                    image = _image(creative, locale, ports, job_dir)
+            except Exception as exc:  # noqa: BLE001 - one honest line on the row
+                reasons.append(f"image not translated: {_reason(exc)}")
+            else:
+                reasons += image.review_reasons
+                if image.edited or Path(image.path).suffix.lower() != ".mp4":
+                    try:
+                        with log.step("png"):
+                            png = finalise_png(Path(image.path), creative, job_dir, row.id)
+                        with log.step("upload"):
+                            drive_url = ports.google.upload_png(
+                                png, f"{row.id}.png", row.target_country
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        reasons.append(f"image not uploaded: {_reason(exc)}")
 
         outcome = RowOutcome(
             status="Needs Review" if reasons else "Finished",
@@ -249,6 +261,10 @@ def process_row(
     _write_json(job_dir / "outcome.json", outcome.model_dump())
     _write_json(job_dir / "timeline.json", log.as_dict())
     return outcome
+
+
+def _reason(exc: Exception) -> str:
+    return exc.reason if isinstance(exc, PipelineError) else str(exc)
 
 
 def _log_line(row: AdRow, outcome: RowOutcome, runs_dir: Path) -> str:
