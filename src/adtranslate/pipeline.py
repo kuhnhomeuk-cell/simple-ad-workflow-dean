@@ -140,8 +140,8 @@ def _image(
     if not replacements:
         return ImageResult(path=str(to_png(creative, job_dir)), edited=False)
 
-    for _ in range(MAX_EDIT_ATTEMPTS):
-        edited = ports.image_edit.edit(creative, replacements, job_dir)
+    for attempt in range(MAX_EDIT_ATTEMPTS):
+        edited = ports.image_edit.edit(creative, replacements, job_dir, attempt=attempt)
         verdict = ports.vision.verify(creative, edited, replacements)
         if verdict.passed:
             return ImageResult(path=str(edited), edited=True)
@@ -186,6 +186,10 @@ def process_row(
 
     job_dir = runs_dir / (row.id.strip() or f"row-{row.row_number}")
     job_dir.mkdir(parents=True, exist_ok=True)
+    if not (dry_run or resume):
+        # A fresh claim owns the folder: an outcome from an earlier pass would hide this
+        # row from `resume` if the run is interrupted before it writes its own.
+        (job_dir / "outcome.json").unlink(missing_ok=True)
 
     outcome: RowOutcome
     try:
@@ -278,6 +282,7 @@ def run_once(
     if dry_run:
         _dry_run(ports, only, echo)
         return []
+    _require_editor(ports)
 
     sheet = ports.google.sheet()
     with SHEET_LOCK:
@@ -312,6 +317,13 @@ def run_once(
     return outcomes
 
 
+def _require_editor(ports: Ports) -> None:
+    if not ports.image_edit.available:
+        raise PipelineError(
+            "no image editor — set GEMINI_API_KEY in .env; text inside ad images needs it"
+        )
+
+
 def _dry_run(ports: Ports, only: str | None, echo: Callable[[str], None]) -> None:
     try:
         sheet = ports.google.sheet()
@@ -328,12 +340,9 @@ def _dry_run(ports: Ports, only: str | None, echo: Callable[[str], None]) -> Non
     echo("countries: " + (", ".join(countries) or "none — fill the Settings tab"))
     echo(f"rows with Status={STATUS_TRANSLATE}: {len(rows)}")
     echo(f"drive folder: {ports.google.check_drive()}")
-    editor = ports.image_edit
-    if not editor.available:
-        raise PipelineError(
-            "no image editor — set GEMINI_API_KEY in .env; text inside ad images needs it"
-        )
-    echo(f"image editor: {editor.label}")
+    _require_editor(ports)
+    ports.image_edit.check()
+    echo(f"image editor: {ports.image_edit.label}")
     echo("dry run: nothing written to the sheet or Drive")
 
 

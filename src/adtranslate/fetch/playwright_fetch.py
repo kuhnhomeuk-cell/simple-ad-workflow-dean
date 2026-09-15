@@ -202,7 +202,11 @@ def _primary_text(text: str, card: str | None) -> str:
         return ""
     body = text[start + len(marker) :]
     if card:
-        cut = body.find(card.split("\n")[0])
+        # The link card follows the copy, and the copy may name the same domain, so cut
+        # at the card's last appearance, never its first.
+        cut = body.rfind(card.strip())
+        if cut < 0:
+            cut = body.rfind(card.split("\n")[0])
         if cut >= 0:
             body = body[:cut]
     return body.strip()

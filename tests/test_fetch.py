@@ -282,3 +282,11 @@ def test_apify_fetcher_raises_ad_not_found_on_an_empty_dataset() -> None:
 def test_apify_fetcher_needs_a_token() -> None:
     with pytest.raises(ValueError):
         ApifyFetcher(token="")
+
+
+def test_primary_text_keeps_a_domain_mentioned_inside_the_copy() -> None:
+    from adtranslate.fetch.playwright_fetch import _primary_text
+
+    card = "EXAMPLE.COM\nOne bought, one free\nEnds tonight\nShop now"
+    text = f"Brand\nSponsored\nShop at EXAMPLE.COM tonight.\nTwo for one.\n{card}\n"
+    assert _primary_text(text, card) == "Shop at EXAMPLE.COM tonight.\nTwo for one."

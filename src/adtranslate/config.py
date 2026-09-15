@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     copy_model: str = "claude-opus-5"
     judge_model: str = "claude-sonnet-5"
     vision_model: str = "gemini-2.5-flash"
-    image_model: str = "gemini-2.5-flash-image"
+    image_model: str = "gemini-3.1-flash-image"
     image_retry_model: str = "gemini-3-pro-image"
 
     # The no-key runtime: a human-or-agent session answers the model jobs, and the Grok

@@ -18,6 +18,9 @@ Nothing else on the sheet is touched.
 2. A Google Cloud project with the Sheets API and the Drive API enabled, and an OAuth client of type Desktop app.
    The downloaded JSON goes to `.secrets/google-oauth-client.json`.
    While the OAuth consent screen is in Testing, add the owner's Google account under Test users, or `auth` ends with `access_denied`.
+   In Testing, Google ends the sign-in after 7 days, and `run` then says to run `uv run adtranslate auth` again.
+   To stop that, set the consent screen's publishing status to In production.
+   Google then shows an unverified-app warning at sign-in, because the app is the owner's own. The owner continues past it.
    The engine asks for the Sheets scope and the full Drive scope, so it can use a folder the owner created by hand.
 3. The sheet ID (the long id in the sheet's URL) and the ID of the Drive folder that will hold the country folders.
    The sheet must have the layout in "The sheet" below.
@@ -57,6 +60,7 @@ Run these from the repo root.
 6. `uv run adtranslate auth`. A browser opens once, the owner signs in, and the token is saved to `.secrets/google-token.json`.
 7. `uv run adtranslate run --once --dry-run`. It is the setup check and starts no work.
    It prints the header row, the countries on the Settings tab, how many rows wait in `Translate`, the Drive folder's name and the image editor (`gemini`), then writes nothing.
+   It also asks Gemini for the two image models, so a wrong key or an unavailable model stops here.
    If it prints all five lines and ends with "dry run: nothing written", the setup is done.
    Any problem prints one `error:` line naming what to fix.
 
@@ -67,6 +71,7 @@ Run these from the repo root.
 `uv run adtranslate run --once --workers 5`
 
 The engine claims each `Translate` row, fetches the ad, writes a copy job for the session, and sends the image to Gemini.
+It will not start without `GEMINI_API_KEY`.
 It then waits (up to 15 minutes per job) for the answer file to appear.
 While it waits, the run is blocked.
 Run it in the background and answer the jobs from the same session.
@@ -103,17 +108,10 @@ The judge block is a second, strict read of the answer against the source.
 The writer and the judge must not be the same pass, so spawn a separate sub-agent for the judge if you can.
 Every `image_strings` source in the request must appear with a target.
 
-**Vision job** (only on a machine without a Gemini key, where the Grok CLI edits the images): `runs/<ID>/vision.request.json`, question `detect` or `verify`.
-Open the image file named in the request with the Read tool and look at it.
-For `detect`, answer with `{"has_text": bool, "blocks": [{"text": "...", "role": "promo|price|handwritten|logo|other", "translate": bool}]}`.
-Logos and brand names are `translate: false`.
-For `verify`, compare the original and the edited image and answer `{"targets_present": [...], "sources_remaining": [...], "unchanged_score": 1-5}`.
-Write it to the `answer_file` path.
-
 Answer every waiting job, then let the run continue.
-A job left unanswered for 15 minutes ends its row as `Failed` with the reason "copy job not filled" (or "vision job not filled").
+A job left unanswered for 15 minutes ends its row as `Failed` with the reason "copy job not filled".
 To recover, write the answer file, set that row's `Status` back to `Translate`, and run again.
-A copy answer for the same ad and language is kept and used at once, a vision job is asked again.
+A copy answer for the same ad and language is kept and used at once.
 An answer left over from a different ad or language is discarded, never reused.
 `adtranslate resume` is only for rows left in `Processing` when a run was interrupted.
 
@@ -127,9 +125,11 @@ The sheet is the result.
 ## If something fails
 
 - `auth` says the token has the wrong scopes. Delete `.secrets/google-token.json` and run `auth` again.
+- `run` says the Google sign-in has expired or that it is not signed in. Run `uv run adtranslate auth`, sign in, then run again.
 - `run` says the sheet cannot be read. The signed-in Google account must have edit access to that sheet.
 - The fetcher returns no ad. Open the Ad Library link in a browser. The ad may have been taken down or be a video.
-- The dry run says "no image editor". Set `GEMINI_API_KEY` in `.env`. See "What it needs".
+- The dry run or `run` says "no image editor". Set `GEMINI_API_KEY` in `.env`. See "What it needs".
+- The dry run says the Gemini key or its image models were refused. Check the key in AI Studio and that billing is on.
 - A row fails with a Gemini `429 RESOURCE_EXHAUSTED` or billing message. Turn on billing, or add credit, for the key's project, then set the row back to `Translate`.
 - The dry run says it cannot open the Drive folder. The signed-in account needs access to that folder, and `DRIVE_ROOT_FOLDER_ID` must be the folder's id from its URL.
 - Anything else. The row's `Review Note` and `runs/<ID>/` say what happened. Nothing is lost.

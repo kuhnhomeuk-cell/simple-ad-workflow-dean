@@ -13,9 +13,11 @@ from ..config import Settings
 
 
 class ModelsPort(Protocol):
-    """The single `google.genai` method this branch uses."""
+    """The two `google.genai` methods this branch uses."""
 
     def generate_content(self, *, model: str, contents: Any, config: Any = None) -> Any: ...
+
+    def get(self, *, model: str) -> Any: ...
 
 
 class GenaiClient(Protocol):

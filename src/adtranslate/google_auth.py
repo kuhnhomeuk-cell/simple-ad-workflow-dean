@@ -1,7 +1,8 @@
-"""OAuth installed-app flow against Dean's own Google account."""
+"""OAuth installed-app flow against the owner's own Google account."""
 
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -18,8 +19,12 @@ class AuthError(RuntimeError):
     """Raised when the token or the OAuth client JSON is not usable."""
 
 
-def get_credentials(settings: Settings) -> Credentials:
-    """Return usable credentials, minting or refreshing the token as needed."""
+def get_credentials(settings: Settings, interactive: bool = False) -> Credentials:
+    """Return usable credentials, refreshing the token as needed.
+
+    Only `adtranslate auth` is interactive: it opens the browser when there is no token or
+    the token can no longer be refreshed. A run never opens a browser; it names the fix.
+    """
     token_path = Path(settings.google_token_path)
     client_secret_path = Path(settings.google_client_secret_path)
 
@@ -29,16 +34,24 @@ def get_credentials(settings: Settings) -> Credentials:
         if not set(SCOPES) <= set(creds.scopes or []):
             raise AuthError(
                 f"the token at {token_path} has the wrong scopes — "
-                "delete it and run `adtranslate auth` again"
+                "delete it and run `uv run adtranslate auth` again"
             )
 
     if creds is not None and creds.valid:
         return creds
 
     if creds is not None and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        _save(creds, token_path)
-        return creds
+        try:
+            creds.refresh(Request())
+        except RefreshError as exc:
+            if not interactive:
+                raise AuthError(
+                    "the Google sign-in has expired or was revoked — "
+                    "run `uv run adtranslate auth` to sign in again"
+                ) from exc
+        else:
+            _save(creds, token_path)
+            return creds
 
     if not client_secret_path.exists():
         raise AuthError(
@@ -47,6 +60,8 @@ def get_credentials(settings: Settings) -> Credentials:
             "(APIs & Services → Credentials → OAuth client ID → Desktop app) "
             "and save it there"
         )
+    if not interactive:
+        raise AuthError("not signed in to Google — run `uv run adtranslate auth` first")
 
     flow = InstalledAppFlow.from_client_secrets_file(str(client_secret_path), SCOPES)
     creds = flow.run_local_server(port=0)

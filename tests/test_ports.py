@@ -616,3 +616,179 @@ def test_check_drive_fails_readably(tmp_path: Path) -> None:
     port._drive = _FakeDrive(_FakeFiles(RuntimeError("404 File not found")))
     with pytest.raises(PipelineError, match="cannot open the Drive folder ROOT"):
         port.check_drive()
+
+
+def test_the_gemini_edit_model_follows_the_rows_attempt_not_a_shared_counter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from adtranslate.ports import ApiImageEditPort
+
+    models: list[str] = []
+
+    def fake_edit_text(
+        image_path: Path, replacements: Any, model: str, settings: Settings, client: Any, out: Path
+    ) -> Path:
+        models.append(model)
+        return out / "edited.png"
+
+    monkeypatch.setattr("adtranslate.image.edit.edit_text", fake_edit_text)
+    settings = Settings(_env_file=None, gemini_api_key="k")
+    port = ApiImageEditPort(settings)
+    for attempt in (0, 1, 0, 1):
+        port.edit(tmp_path / "c.jpg", [("a", "b")], tmp_path, attempt=attempt)
+    assert models == [
+        settings.image_model,
+        settings.image_retry_model,
+        settings.image_model,
+        settings.image_retry_model,
+    ]
+
+
+def test_the_gemini_check_names_a_refused_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adtranslate.ports import ApiImageEditPort
+
+    class Models:
+        def get(self, *, model: str) -> object:
+            raise RuntimeError("400 API key not valid")
+
+    class Client:
+        models = Models()
+
+    monkeypatch.setattr("adtranslate.image.client.resolve_client", lambda s, c: Client())
+    port = ApiImageEditPort(Settings(_env_file=None, gemini_api_key="bad"))
+    with pytest.raises(PipelineError, match="GEMINI_API_KEY.*API key not valid"):
+        port.check()
+
+
+def test_concurrent_uploads_create_one_country_folder(tmp_path: Path) -> None:
+    from adtranslate.ports import OAuthGooglePort
+
+    created: list[str] = []
+    guard = threading.Lock()
+    # All five threads look for the folder at once unless the port serialises them.
+    together = threading.Barrier(5, timeout=0.5)
+
+    class Call:
+        def __init__(self, result: Any) -> None:
+            self._result = result
+
+        def execute(self) -> Any:
+            return self._result() if callable(self._result) else self._result
+
+    class Files:
+        def list(self, **kwargs: Any) -> Call:
+            def result() -> dict[str, Any]:
+                with guard:
+                    seen = {"files": [{"id": created[0]}] if created else []}
+                try:
+                    together.wait()
+                except threading.BrokenBarrierError:
+                    pass
+                return seen
+
+            return Call(result)
+
+        def create(self, **kwargs: Any) -> Call:
+            def result() -> dict[str, str]:
+                with guard:
+                    created.append(f"folder-{len(created)}")
+                    return {"id": created[-1]}
+
+            return Call(result)
+
+    class Drive:
+        def files(self) -> Files:
+            return Files()
+
+    port = OAuthGooglePort(Settings(_env_file=None, drive_root_folder_id="ROOT"), "SHEET")
+    port._drive = Drive()
+    threads = [
+        threading.Thread(target=port.ensure_folder, args=("Netherlands",)) for _ in range(5)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert created == ["folder-0"]
+
+
+def _expired_token(tmp_path: Path) -> Path:
+    from adtranslate.google_auth import SCOPES
+
+    token = tmp_path / "google-token.json"
+    token.write_text(
+        json.dumps(
+            {
+                "token": "t",
+                "refresh_token": "r",
+                "client_id": "c",
+                "client_secret": "s",
+                "scopes": SCOPES,
+                "expiry": "2020-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return token
+
+
+def test_an_expired_sign_in_tells_the_run_to_sign_in_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from google.auth.exceptions import RefreshError
+    from google.oauth2.credentials import Credentials
+
+    from adtranslate.google_auth import AuthError, get_credentials
+
+    def refused(self: Credentials, request: Any) -> None:
+        raise RefreshError("invalid_grant: Token has been expired or revoked.")
+
+    monkeypatch.setattr(Credentials, "refresh", refused)
+    settings = Settings(_env_file=None, google_token_path=str(_expired_token(tmp_path)))
+    with pytest.raises(AuthError, match="adtranslate auth"):
+        get_credentials(settings)
+
+
+def test_auth_signs_in_again_when_the_token_has_expired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from google.auth.exceptions import RefreshError
+    from google.oauth2.credentials import Credentials
+
+    import adtranslate.google_auth as google_auth
+
+    def refused(self: Credentials, request: Any) -> None:
+        raise RefreshError("invalid_grant")
+
+    fresh = Credentials(token="new", refresh_token="r2", scopes=google_auth.SCOPES)
+
+    class Flow:
+        def run_local_server(self, port: int) -> Credentials:
+            return fresh
+
+    monkeypatch.setattr(Credentials, "refresh", refused)
+    monkeypatch.setattr(
+        google_auth.InstalledAppFlow, "from_client_secrets_file", lambda path, scopes: Flow()
+    )
+    client = tmp_path / "client.json"
+    client.write_text("{}", encoding="utf-8")
+    token = _expired_token(tmp_path)
+    settings = Settings(
+        _env_file=None, google_token_path=str(token), google_client_secret_path=str(client)
+    )
+    assert google_auth.get_credentials(settings, interactive=True) is fresh
+    assert json.loads(token.read_text(encoding="utf-8"))["token"] == "new"
+
+
+def test_a_run_never_opens_a_browser_to_sign_in(tmp_path: Path) -> None:
+    from adtranslate.google_auth import AuthError, get_credentials
+
+    client = tmp_path / "client.json"
+    client.write_text("{}", encoding="utf-8")
+    settings = Settings(
+        _env_file=None,
+        google_token_path=str(tmp_path / "none.json"),
+        google_client_secret_path=str(client),
+    )
+    with pytest.raises(AuthError, match="adtranslate auth"):
+        get_credentials(settings)

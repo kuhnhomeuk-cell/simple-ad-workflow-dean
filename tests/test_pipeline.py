@@ -143,7 +143,12 @@ class FakeEdit:
         self.calls = 0
         self.available = available
 
-    def edit(self, image_path: Path, replacements: list[tuple[str, str]], out_dir: Path) -> Path:
+    def check(self) -> None:
+        return None
+
+    def edit(
+        self, image_path: Path, replacements: list[tuple[str, str]], out_dir: Path, attempt: int = 0
+    ) -> Path:
         self.calls += 1
         out_dir.mkdir(parents=True, exist_ok=True)
         return png(out_dir / f"edited-{self.calls}.png")
@@ -563,3 +568,69 @@ def test_dry_run_fails_when_no_image_editor_is_set(tmp_path: Path, settings: Set
 
     assert any(line.startswith("header: ") for line in lines)
     assert not any(tmp_path.iterdir())
+
+
+class AttemptEdit(FakeEdit):
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts: list[int] = []
+
+    def edit(
+        self, image_path: Path, replacements: list[tuple[str, str]], out_dir: Path, attempt: int = 0
+    ) -> Path:
+        self.attempts.append(attempt)
+        return super().edit(image_path, replacements, out_dir, attempt)
+
+
+def test_every_row_starts_its_image_edit_on_the_first_attempt(
+    tmp_path: Path, settings: Settings
+) -> None:
+    sheet = make_sheet(["NL-027", "NL-028"])
+    scan = TextScan.model_validate(
+        {"has_text": True, "blocks": [{"text": "Achetez 1 +", "translate": True}]}
+    )
+    edit = AttemptEdit()
+    ports, _ = build(sheet, vision=FakeVision(scan, [False, True, False, True]), edit=edit)
+    first, second = sheet.read_rows()
+    process_row(first, ports, settings, tmp_path, locale=LOCALE)
+    process_row(second, ports, settings, tmp_path, locale=LOCALE)
+    assert edit.attempts == [0, 1, 0, 1]
+
+
+def test_a_fresh_claim_clears_the_last_outcome_so_an_interrupted_row_resumes(
+    tmp_path: Path, settings: Settings
+) -> None:
+    sheet = make_sheet(["NL-027"])
+    stale = tmp_path / "NL-027" / "outcome.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"status": "Finished"}', encoding="utf-8")
+    ports, _ = build(sheet, fetcher=FakeFetcher(raises=KeyboardInterrupt()))  # type: ignore[arg-type]
+
+    with pytest.raises(KeyboardInterrupt):
+        process_row(sheet.read_rows()[0], ports, settings, tmp_path, locale=LOCALE)
+
+    assert sheet.cells(2, "Status") == "Processing"
+    assert not stale.exists()
+
+
+def test_a_real_run_refuses_to_start_without_an_image_editor(
+    tmp_path: Path, settings: Settings
+) -> None:
+    sheet = make_sheet(["NL-027"])
+    ports, _ = build(sheet, edit=FakeEdit(available=False))
+    with pytest.raises(PipelineError, match="GEMINI_API_KEY"):
+        run_once(ports, settings, tmp_path, workers=5, echo=lambda _: None)
+    assert sheet.writes == []
+
+
+def test_dry_run_stops_when_the_image_editor_check_fails(
+    tmp_path: Path, settings: Settings
+) -> None:
+    class RefusedEdit(FakeEdit):
+        def check(self) -> None:
+            raise PipelineError("GEMINI_API_KEY was refused: 400 API key not valid")
+
+    sheet = make_sheet(["NL-027"])
+    ports, _ = build(sheet, edit=RefusedEdit())
+    with pytest.raises(PipelineError, match="API key not valid"):
+        run_once(ports, settings, tmp_path, workers=5, dry_run=True, echo=lambda _: None)

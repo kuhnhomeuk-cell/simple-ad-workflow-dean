@@ -22,7 +22,7 @@ def auth() -> None:
     """Mint or refresh the Google token and print the scopes it carries."""
     settings = Settings()
     try:
-        creds = get_credentials(settings)
+        creds = get_credentials(settings, interactive=True)
     except AuthError as exc:
         _fail(str(exc))
         return

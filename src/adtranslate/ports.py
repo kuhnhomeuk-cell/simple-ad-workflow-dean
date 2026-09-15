@@ -463,8 +463,15 @@ class ImageEditPort(Protocol):
     @property
     def label(self) -> str: ...
 
+    def check(self) -> None:
+        """Raise a `PipelineError` when the editor cannot be used. Called by the dry run."""
+
     def edit(
-        self, image_path: Path, replacements: list[tuple[str, str]], out_dir: Path
+        self,
+        image_path: Path,
+        replacements: list[tuple[str, str]],
+        out_dir: Path,
+        attempt: int = 0,
     ) -> Path: ...
 
 
@@ -476,15 +483,30 @@ class ApiImageEditPort:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._attempt = 0
 
-    def edit(self, image_path: Path, replacements: list[tuple[str, str]], out_dir: Path) -> Path:
-        from adtranslate.image.edit import edit_text
+    def check(self) -> None:
+        """Ask Gemini for both edit models: a refused key or a missing model fails here."""
+        from adtranslate.image import client as genai_client
 
-        first = self._attempt == 0
-        model = self._settings.image_model if first else self._settings.image_retry_model
-        self._attempt += 1
-        return edit_text(image_path, replacements, model, self._settings, None, out_dir)
+        try:
+            client = genai_client.resolve_client(self._settings, None)
+            for model in (self._settings.image_model, self._settings.image_retry_model):
+                client.models.get(model=model)
+        except Exception as exc:  # noqa: BLE001 - the setup check speaks in one line
+            raise PipelineError(f"GEMINI_API_KEY or its image models were refused: {exc}") from exc
+
+    def edit(
+        self,
+        image_path: Path,
+        replacements: list[tuple[str, str]],
+        out_dir: Path,
+        attempt: int = 0,
+    ) -> Path:
+        """The first attempt of a row uses the flash model, any retry the pro model."""
+        from adtranslate.image import edit as image_edit
+
+        model = self._settings.image_model if attempt == 0 else self._settings.image_retry_model
+        return image_edit.edit_text(image_path, replacements, model, self._settings, None, out_dir)
 
 
 GROK_PROMPT = """Use the image_edit tool (do not use image_gen, do not draw in code).
@@ -517,7 +539,16 @@ class GrokImageEditPort:
     def available(self) -> bool:
         return grok_available(self._settings)
 
-    def edit(self, image_path: Path, replacements: list[tuple[str, str]], out_dir: Path) -> Path:
+    def check(self) -> None:
+        return None
+
+    def edit(
+        self,
+        image_path: Path,
+        replacements: list[tuple[str, str]],
+        out_dir: Path,
+        attempt: int = 0,
+    ) -> Path:
         if not replacements:
             raise PipelineError("image edit called with no replacements")
         source = Path(image_path).resolve()
@@ -602,6 +633,9 @@ class OAuthGooglePort:
         self._sheet: SheetPort | None = None
         self._drive: Any = None
         self._folders: dict[str, str] = {}
+        # The Drive client is not thread-safe and folder creation is check-then-create,
+        # so every Drive call from the worker pool goes through one lock.
+        self._drive_lock = threading.RLock()
 
     def _credentials(self) -> Any:
         from adtranslate.google_auth import get_credentials
@@ -617,6 +651,19 @@ class OAuthGooglePort:
 
     def check_drive(self) -> str:
         """The root folder's name, or a `PipelineError` saying why it cannot be used."""
+        with self._drive_lock:
+            return self._check_drive()
+
+    def ensure_folder(self, country: str) -> str:
+        """The per-country folder under the root, created once and remembered."""
+        with self._drive_lock:
+            return self._ensure_folder(country)
+
+    def upload_png(self, path: Path, name: str, country: str) -> str:
+        with self._drive_lock:
+            return self._upload_png(path, name, country)
+
+    def _check_drive(self) -> str:
         root = self._settings.drive_root_folder_id
         if not root:
             raise PipelineError("no Drive folder id — set DRIVE_ROOT_FOLDER_ID in .env")
@@ -631,8 +678,7 @@ class OAuthGooglePort:
             raise PipelineError(f"DRIVE_ROOT_FOLDER_ID {root} is not a folder")
         return str(found.get("name", root))
 
-    def ensure_folder(self, country: str) -> str:
-        """The per-country folder under the root, created once and remembered."""
+    def _ensure_folder(self, country: str) -> str:
         name = country.strip() or "Other"
         if name in self._folders:
             return self._folders[name]
@@ -659,11 +705,11 @@ class OAuthGooglePort:
         self._folders[name] = folder_id
         return folder_id
 
-    def upload_png(self, path: Path, name: str, country: str) -> str:
+    def _upload_png(self, path: Path, name: str, country: str) -> str:
         from googleapiclient.http import MediaFileUpload
 
         service = self._service()
-        folder_id = self.ensure_folder(country)
+        folder_id = self._ensure_folder(country)
         media = MediaFileUpload(str(path), mimetype="image/png", resumable=False)
         query = f"name = '{name}' and '{folder_id}' in parents and trashed = false"
         existing = service.files().list(q=query, fields="files(id)").execute().get("files", [])
