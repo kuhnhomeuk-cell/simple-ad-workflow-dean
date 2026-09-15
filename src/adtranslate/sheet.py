@@ -278,7 +278,9 @@ class _BaseSheet(ABC):
 
         allocated = current.id.strip()
         if not allocated:
-            prefix = country_prefix(current.target_country)
+            prefix = country_prefix(current.target_country) or self._fallback_prefix(
+                current.target_country
+            )
             if prefix is not None:
                 allocated = next_id(prefix, (cell(headers, v, "ID") for v in values))
                 updates["ID"] = allocated
@@ -302,6 +304,19 @@ class _BaseSheet(ABC):
         if outcome.status != "Failed":
             locale = self.read_locales().get(row.target_country.strip())
         self._write_cells(row.row_number, outcome_updates(outcome, locale))
+
+    def _fallback_prefix(self, country: str) -> str | None:
+        """For a country outside `COUNTRY_PREFIXES`: the region of its Settings tag
+        (`French (fr-FR)` → `FR`), else the first two letters of its name."""
+        name = country.strip()
+        try:
+            region = self.read_locales()[name].tag.split("-")[-1]
+        except (KeyError, ValueError, SheetContractError):
+            region = ""
+        if len(region) == 2 and region.isalpha():
+            return region.upper()
+        letters = "".join(ch for ch in name if ch.isascii() and ch.isalpha())
+        return letters[:2].upper() if len(letters) >= 2 else None
 
     def cells_of(self, row_number: int, header: str) -> str:
         """One cell, read fresh. The live test uses it to snapshot and verify."""

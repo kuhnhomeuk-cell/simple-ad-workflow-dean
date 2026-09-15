@@ -20,26 +20,44 @@ Nothing else on the sheet is touched.
    While the OAuth consent screen is in Testing, add the owner's Google account under Test users, or `auth` ends with `access_denied`.
    The engine asks for the Sheets scope and the full Drive scope, so it can use a folder the owner created by hand.
 3. The sheet ID (the long id in the sheet's URL) and the ID of the Drive folder that will hold the country folders.
-4. For the text inside images, one of: the Grok Imagine CLI on this machine (an X Premium subscription), or a Gemini API key.
-   Without either, rows whose image carries text land on `Needs Review` with that reason.
-   Everything else still runs.
-5. No Anthropic API key is needed when a Claude Code session drives the run (see "Answering the model jobs").
-   With an Anthropic key in `.env`, the engine calls the API itself.
+   The sheet must have the layout in "The sheet" below.
+4. A Gemini API key, for the text inside ad images.
+   Create it at https://aistudio.google.com/apikey in the same Google Cloud project, with billing turned on for that project.
+   Gemini reads the text in each image, paints the translation back and checks the result.
+   It is the only paid key, and it is required: the setup check stops without it.
+5. No Anthropic API key. The Claude Code session writes the ad copy and the judge scores (see "Answering the model jobs").
+   With an Anthropic key in `.env`, the engine calls the API itself instead.
+
+## The sheet
+
+The engine reads two tabs and checks their headers before it does anything.
+
+Tab `Sheet1` has these 12 headers in row 1, spelled exactly:
+`ID`, `Status`, `Target Country`, `Store / product URL`, `Trendtrack Ad Link`, `Facebook Ad Link`, `Drive URL`, `Primary Text`, `Headline`, `Description`, `Target Language`, `Review Note`.
+A row is picked up when `Status` is `Translate`, `Facebook Ad Link` holds an Ad Library link and `Target Country` names a country on the Settings tab.
+`ID` may be blank: the engine fills it, for example `NL-029` or `FR-001`.
+The engine writes only `ID`, `Status`, `Drive URL`, `Primary Text`, `Headline`, `Description`, `Target Language` and `Review Note`.
+
+Tab `Settings` has the headers `Target Country`, `Default Language`, `Currency`, one row per country.
+`Default Language` carries the language name and its tag in brackets, for example `Dutch (nl-NL)` or `French (fr-FR)`.
+The country name must match `Target Country` on `Sheet1` exactly.
+
+Every uploaded image is shared as "anyone with the link can view", so the link in `Drive URL` opens for whoever has it.
 
 ## Setup, step by step
 
 Run these from the repo root.
 
-1. Python 3.12 and uv: `curl -LsSf https://astral.sh/uv/install.sh | sh` if uv is missing.
+1. uv: `curl -LsSf https://astral.sh/uv/install.sh | sh` if uv is missing. The repo pins Python 3.12 and uv fetches it.
 2. `uv sync --group dev`
-3. `uv run playwright install chromium`
+3. `uv run playwright install chromium` (on Linux: `uv run playwright install --with-deps chromium`)
 4. `mkdir -p .secrets` and place the OAuth client JSON at `.secrets/google-oauth-client.json`.
-5. `cp .env.example .env` and set `SHEET_ID` and `DRIVE_ROOT_FOLDER_ID`.
-   Leave the API keys empty unless the owner has them.
+5. `cp .env.example .env` and set `SHEET_ID`, `DRIVE_ROOT_FOLDER_ID` and `GEMINI_API_KEY`.
+   Leave every other line blank.
 6. `uv run adtranslate auth`. A browser opens once, the owner signs in, and the token is saved to `.secrets/google-token.json`.
 7. `uv run adtranslate run --once --dry-run`. It is the setup check and starts no work.
-   It prints the header row, the countries on the Settings tab, how many rows wait in `Translate`, the Drive folder's name and which image editor this machine has, then writes nothing.
-   If it prints all five lines, the setup is done.
+   It prints the header row, the countries on the Settings tab, how many rows wait in `Translate`, the Drive folder's name and the image editor (`gemini`), then writes nothing.
+   If it prints all five lines and ends with "dry run: nothing written", the setup is done.
    Any problem prints one `error:` line naming what to fix.
 
 `.env` and `.secrets/` are git-ignored and never leave the machine.
@@ -48,7 +66,7 @@ Run these from the repo root.
 
 `uv run adtranslate run --once --workers 5`
 
-The engine claims each `Translate` row, fetches the ad and writes a job file for every step that needs a language model.
+The engine claims each `Translate` row, fetches the ad, writes a copy job for the session, and sends the image to Gemini.
 It then waits (up to 15 minutes per job) for the answer file to appear.
 While it waits, the run is blocked.
 Run it in the background and answer the jobs from the same session.
@@ -85,7 +103,7 @@ The judge block is a second, strict read of the answer against the source.
 The writer and the judge must not be the same pass, so spawn a separate sub-agent for the judge if you can.
 Every `image_strings` source in the request must appear with a target.
 
-**Vision job**: `runs/<ID>/vision.request.json`, question `detect` or `verify`.
+**Vision job** (only on a machine without a Gemini key, where the Grok CLI edits the images): `runs/<ID>/vision.request.json`, question `detect` or `verify`.
 Open the image file named in the request with the Read tool and look at it.
 For `detect`, answer with `{"has_text": bool, "blocks": [{"text": "...", "role": "promo|price|handwritten|logo|other", "translate": bool}]}`.
 Logos and brand names are `translate: false`.
@@ -111,7 +129,8 @@ The sheet is the result.
 - `auth` says the token has the wrong scopes. Delete `.secrets/google-token.json` and run `auth` again.
 - `run` says the sheet cannot be read. The signed-in Google account must have edit access to that sheet.
 - The fetcher returns no ad. Open the Ad Library link in a browser. The ad may have been taken down or be a video.
-- Rows end `Needs Review` with "no image editor on this machine". Neither the Grok CLI nor a Gemini key is available. See "What it needs".
+- The dry run says "no image editor". Set `GEMINI_API_KEY` in `.env`. See "What it needs".
+- A row fails with a Gemini `429 RESOURCE_EXHAUSTED` or billing message. Turn on billing, or add credit, for the key's project, then set the row back to `Translate`.
 - The dry run says it cannot open the Drive folder. The signed-in account needs access to that folder, and `DRIVE_ROOT_FOLDER_ID` must be the folder's id from its URL.
 - Anything else. The row's `Review Note` and `runs/<ID>/` say what happened. Nothing is lost.
 

@@ -1,40 +1,20 @@
 # ad-translate
 
-Private engine. Reads a Google Sheet of Facebook ad links, transcreates the ad copy into the
-target country's language, translates any text baked into the creative, uploads the creative to
-Drive and writes the results back to the row. The sheet is the interface: set `Status` to
-`Translate` and a `Target Country`, and the engine does the rest.
+Reads a Google Sheet of Facebook Ad Library links, translates each ad's copy into the target country's language, translates the text inside the ad image, uploads the image to Drive and writes the results back to the row.
 
-Not published. Runs on Dean's own Google account via an OAuth installed-app flow.
+Setup, running and troubleshooting are in `HANDOVER.md`. Follow it top to bottom.
 
-## Setup
-
-1. `uv sync --group dev`
-2. `uv run playwright install chromium`
-3. In the Google Cloud console, create an OAuth client ID of type Desktop app, download the JSON
-   and save it as `.secrets/google-oauth-client.json`.
-4. `cp .env.example .env` and fill in the sheet ID, the Drive root folder ID and the API keys.
-5. `uv run adtranslate auth` — opens a browser once and writes `.secrets/google-token.json`.
-
-`.env` and `.secrets/` stay on the machine and are git-ignored.
+Inputs: the sheet ID, a Drive folder ID, an OAuth desktop-client JSON and a Gemini API key, all from the owner's own Google Cloud project.
+A Claude Code session writes the ad copy, so no Anthropic key is needed.
 
 ## Commands
 
-- `uv run adtranslate auth` — mint or refresh the Google token, print its scopes.
-- `uv run adtranslate run --once --dry-run` — read the sheet, print the header row and the number
-  of rows waiting in `Translate`, write nothing.
-- `uv run adtranslate run --once` — one pass over the `Translate` rows.
-- `uv run adtranslate run --watch` — poll the sheet every `POLL_SECONDS`.
-- `--sheet <id>` overrides the sheet from `.env`; `--only <row id>` limits the pass to one row.
-
-Phase 0 implements `auth` and `run --once --dry-run`. Any other `run` combination exits 2.
+- `uv run adtranslate auth`: sign in to Google once and save the token.
+- `uv run adtranslate run --once --dry-run`: the setup check. Reads the sheet and the Drive folder, starts no work.
+- `uv run adtranslate run --once --workers 5`: one pass over the `Translate` rows.
+- `uv run adtranslate jobs`: the copy jobs waiting for the session.
+- `uv run adtranslate resume`: finish rows left in `Processing` by an interrupted run.
 
 ## Checks
 
-```
-uv run ruff check .
-uv run mypy src
-uv run pytest -q
-```
-
-State and next step: `STATE.md`. Plan: `specs/ad-translation-pipeline.html`.
+`uv run ruff check .` then `uv run mypy src` then `uv run pytest -q`.

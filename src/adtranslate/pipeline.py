@@ -184,7 +184,7 @@ def process_row(
             if not sheet.claim(row):
                 return RowOutcome(status="Skipped", note="claimed elsewhere")
 
-    job_dir = runs_dir / (row.id.strip() or "unassigned")
+    job_dir = runs_dir / (row.id.strip() or f"row-{row.row_number}")
     job_dir.mkdir(parents=True, exist_ok=True)
 
     outcome: RowOutcome
@@ -249,7 +249,7 @@ def process_row(
 
 def _log_line(row: AdRow, outcome: RowOutcome, runs_dir: Path) -> str:
     """The one line a processed row prints."""
-    timeline = runs_dir / (row.id.strip() or "unassigned") / "timeline.json"
+    timeline = runs_dir / (row.id.strip() or f"row-{row.row_number}") / "timeline.json"
     steps = ""
     if timeline.exists():
         data = json.loads(timeline.read_text(encoding="utf-8"))
@@ -329,11 +329,11 @@ def _dry_run(ports: Ports, only: str | None, echo: Callable[[str], None]) -> Non
     echo(f"rows with Status={STATUS_TRANSLATE}: {len(rows)}")
     echo(f"drive folder: {ports.google.check_drive()}")
     editor = ports.image_edit
-    echo(
-        f"image editor: {editor.label}"
-        if editor.available
-        else f"image editor: none — {NO_EDITOR}; those rows end as Needs Review"
-    )
+    if not editor.available:
+        raise PipelineError(
+            "no image editor — set GEMINI_API_KEY in .env; text inside ad images needs it"
+        )
+    echo(f"image editor: {editor.label}")
     echo("dry run: nothing written to the sheet or Drive")
 
 

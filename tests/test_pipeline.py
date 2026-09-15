@@ -19,7 +19,7 @@ from adtranslate.image.detect import TextScan
 from adtranslate.image.verify import VerifyResult
 from adtranslate.models import AdCreative, AdRow, CopyResult, Locale, RowOutcome
 from adtranslate.pipeline import pending_jobs, process_row, run_once
-from adtranslate.ports import Ports, SessionCopyPort
+from adtranslate.ports import PipelineError, Ports, SessionCopyPort
 from adtranslate.sheet import InMemorySheet
 
 SIZE = (240, 240)
@@ -551,3 +551,15 @@ def test_text_in_the_image_with_no_editor_needs_review_not_failed(
     assert edit.calls == 0
     assert copy.string_calls == 0
     assert len(google.uploads) == 1
+
+
+def test_dry_run_fails_when_no_image_editor_is_set(tmp_path: Path, settings: Settings) -> None:
+    sheet = make_sheet(["NL-027"])
+    ports, _ = build(sheet, edit=FakeEdit(available=False))
+    lines: list[str] = []
+
+    with pytest.raises(PipelineError, match="GEMINI_API_KEY"):
+        run_once(ports, settings, tmp_path, workers=5, dry_run=True, echo=lines.append)
+
+    assert any(line.startswith("header: ") for line in lines)
+    assert not any(tmp_path.iterdir())

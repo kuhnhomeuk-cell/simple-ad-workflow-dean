@@ -70,18 +70,38 @@ def test_blank_ids_are_allocated_in_sequence() -> None:
     assert sheet.cells(second.row_number, "ID") == "NL-030"
 
 
-def test_unknown_country_allocates_nothing_and_still_claims() -> None:
+def test_a_country_outside_the_map_takes_its_prefix_from_the_settings_tag() -> None:
+    rows = [
+        REQUIRED_HEADERS,
+        ["", "Translate", "France", "", "", "https://fb/1", "", "", "", "", "", ""],
+        ["", "Translate", "France", "", "", "https://fb/2", "", "", "", "", "", ""],
+    ]
+    settings = [
+        ["Target Country", "Default Language", "Currency"],
+        ["France", "French (fr-FR)", "EUR"],
+    ]
+    sheet = InMemorySheet(rows, settings, now=lambda: FROZEN)
+    first, second = sheet.read_rows()
+
+    assert sheet.claim(first) is True
+    assert sheet.claim(second) is True
+    assert (first.id, second.id) == ("FR-001", "FR-002")
+
+
+def test_a_country_nowhere_still_gets_a_unique_id() -> None:
     rows = [
         REQUIRED_HEADERS,
         ["", "Translate", "Narnia", "", "", "https://fb/1", "", "", "", "", "", ""],
+        ["", "Translate", "Narnia", "", "", "https://fb/2", "", "", "", "", "", ""],
     ]
     settings = [["Target Country", "Default Language", "Currency"]]
     sheet = InMemorySheet(rows, settings, now=lambda: FROZEN)
-    row = sheet.read_rows()[0]
+    first, second = sheet.read_rows()
 
     assert country_prefix("Narnia") is None
-    assert sheet.claim(row) is True
-    assert sheet.cells(2, "ID") == ""
+    assert sheet.claim(first) is True
+    assert sheet.claim(second) is True
+    assert (sheet.cells(2, "ID"), sheet.cells(3, "ID")) == ("NA-001", "NA-002")
 
 
 def test_stale_reset_fires_after_the_window_and_not_before() -> None:
